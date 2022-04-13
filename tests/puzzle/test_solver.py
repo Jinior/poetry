@@ -1785,6 +1785,38 @@ def test_solver_ignores_dependencies_with_incompatible_python_full_version_marke
     )
 
 
+@pytest.mark.parametrize("equal", [False, True])
+def test_solver_selects_proper_version_from_opposite_markers(
+    solver: Solver, repo: Repository, package: Package, equal: bool
+):
+    a = Factory.create_dependency("A", "1.0.0")
+    if equal:
+        a.marker = parse_marker("sys_platform == 'linux'")
+    else:
+        a.marker = parse_marker("sys_platform != 'linux'")
+
+    package.add_dependency(a)
+
+    package_a = get_package("A", "1.0.0")
+    package_a.marker = parse_marker("sys_platform == 'linux'")
+
+    package_b = get_package("A", "1.0.0")
+    package_b.marker = parse_marker("sys_platform != 'linux'")
+
+    repo.add_package(package_a)
+    repo.add_package(package_b)
+
+    transaction = solver.solve()
+
+    expected_package = package_a if equal else package_b
+    check_solver_result(
+        transaction,
+        [
+            {"job": "install", "package": expected_package},
+        ],
+    )
+
+
 def test_solver_git_dependencies_update(
     solver: Solver, repo: Repository, package: Package, installed: InstalledRepository
 ):
