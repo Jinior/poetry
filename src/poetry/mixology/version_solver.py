@@ -447,7 +447,9 @@ class VersionSolver:
             )
 
         if not conflict:
-            package.marker = package.marker.intersect(dependency.marker).without_extras()
+            package.marker = package.marker.intersect(
+                dependency.marker
+            ).without_extras()
             self._solution.decide(package)
             self._log(
                 f"selecting {package.complete_name} ({package.full_pretty_version})"
