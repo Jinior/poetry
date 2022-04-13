@@ -447,6 +447,7 @@ class VersionSolver:
             )
 
         if not conflict:
+            package.marker = dependency.marker
             self._solution.decide(package)
             self._log(
                 f"selecting {package.complete_name} ({package.full_pretty_version})"
