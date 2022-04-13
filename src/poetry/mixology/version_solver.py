@@ -447,7 +447,7 @@ class VersionSolver:
             )
 
         if not conflict:
-            package.marker = package.marker.intersect(dependency.marker)
+            package.marker = package.marker.intersect(dependency.marker).without_extras()
             self._solution.decide(package)
             self._log(
                 f"selecting {package.complete_name} ({package.full_pretty_version})"
@@ -492,12 +492,22 @@ class VersionSolver:
 
         locked = self._locked.get(dependency.name, [])
         for package in locked:
-            if (allow_similar or dependency.is_same_package_as(package)) and (
-                dependency.constraint.allows(package.version)
-                or package.is_prerelease()
+            is_correct_package = allow_similar or dependency.is_same_package_as(package)
+            is_compatible_marker = dependency.marker == package.marker
+            is_acceptable_pre_release = (
+                package.is_prerelease()
                 and dependency.constraint.allows(package.version.next_patch())
+            )
+            if (
+                is_correct_package
+                and is_compatible_marker
+                and (
+                    dependency.constraint.allows(package.version)
+                    or is_acceptable_pre_release
+                )
             ):
                 return DependencyPackage(dependency, package.package)
+
         return None
 
     def _log(self, text: str) -> None:
