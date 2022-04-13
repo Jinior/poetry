@@ -536,7 +536,7 @@ class Locker:
             "optional": package.optional,
             "python-versions": package.python_versions,
             "files": sorted(package.files, key=lambda x: x["file"]),
-            "marker": str(package.marker)
+
         }
 
         if dependencies:
@@ -586,6 +586,9 @@ class Locker:
 
             if package.source_type in ["directory", "git"]:
                 data["develop"] = package.develop
+
+        if not package.marker.is_any():
+            data["marker"] = str(package.marker)
 
         return data
 
