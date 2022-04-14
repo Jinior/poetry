@@ -495,14 +495,12 @@ class VersionSolver:
         locked = self._locked.get(dependency.name, [])
         for package in locked:
             is_correct_package = allow_similar or dependency.is_same_package_as(package)
-            is_compatible_marker = dependency.marker == package.marker
             is_acceptable_pre_release = (
                 package.is_prerelease()
                 and dependency.constraint.allows(package.version.next_patch())
             )
             if (
                 is_correct_package
-                and is_compatible_marker
                 and (
                     dependency.constraint.allows(package.version)
                     or is_acceptable_pre_release
