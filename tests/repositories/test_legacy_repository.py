@@ -15,7 +15,9 @@ from poetry.core.packages.dependency import Dependency
 from poetry.factory import Factory
 from poetry.repositories.exceptions import PackageNotFound
 from poetry.repositories.exceptions import RepositoryError
+from poetry.repositories.indexed import IndexedLegacyRepository
 from poetry.repositories.legacy_repository import LegacyRepository
+from poetry.repositories.link_sources.html import SimpleIndexPage
 from poetry.repositories.link_sources.html import SimpleRepositoryPage
 
 
@@ -377,6 +379,64 @@ def test_get_package_retrieves_non_sha256_hashes_mismatching_known_hash():
 
 def test_get_package_retrieves_packages_with_no_hashes():
     repo = MockRepository()
+
+    package = repo.package("jupyter", "1.0.0")
+
+    assert [
+        {
+            "file": "jupyter-1.0.0.tar.gz",
+            "hash": "sha256:d9dc4b3318f310e34c82951ea5d6683f67bed7def4b259fafbfe4f1beb1d8e5f",  # noqa: E501
+        }
+    ] == package.files
+
+
+class MockIndexedRepository(MockRepository, IndexedLegacyRepository):
+    def _get_index_page(self) -> SimpleIndexPage | None:
+        fixture = self.FIXTURES / "index.html"
+        if not fixture.exists():
+            return
+
+        with fixture.open(encoding="utf-8") as f:
+            return SimpleIndexPage(self._url + "/", f.read())
+
+
+def test_indexed_root_page_has_valid_content():
+    repo = MockIndexedRepository()
+    assert repo._index_page.serves_package("pyyaml")
+
+
+def test_indexed_fails_on_missing():
+    repo = MockIndexedRepository()
+
+    packages = repo.find_packages(Factory.create_dependency("this-doesnt-exist", "*"))
+
+    assert packages == []
+
+
+def test_indexed_succeeds_on_existing():
+    repo = MockIndexedRepository()
+
+    packages = repo.find_packages(Factory.create_dependency("pyyaml", "*"))
+
+    assert len(packages) == 1
+
+
+def test_indexed_pep426_underscore_hyphen():
+    repo = MockIndexedRepository()
+
+    # 'missing-version' in the index
+    assert repo._index_page.serves_package("missing_version")
+
+
+def test_indexed_pep426_case_insensitive():
+    repo = MockIndexedRepository()
+
+    # 'black' in the index
+    assert repo._index_page.serves_package("Black")
+
+
+def test_indexed_retrieves_package_with_no_hashes():
+    repo = MockIndexedRepository()
 
     package = repo.package("jupyter", "1.0.0")
 
