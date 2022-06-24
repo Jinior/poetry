@@ -6,8 +6,6 @@ from typing import TYPE_CHECKING
 
 from poetry.publishing.uploader import Uploader
 from poetry.utils.authenticator import Authenticator
-from poetry.utils.helpers import get_cert
-from poetry.utils.helpers import get_client_cert
 
 
 if TYPE_CHECKING:
@@ -72,17 +70,9 @@ class Publisher:
                     username = auth.username
                     password = auth.password
 
-        resolved_client_cert = client_cert or get_client_cert(
-            self._poetry.config, repository_name
-        )
-        # Requesting missing credentials but only if there is not a client cert defined.
-        if not resolved_client_cert and hasattr(self._io, "ask"):
-            if username is None:
-                username = self._io.ask("Username:")
-
-            # skip password input if no username is provided, assume unauthenticated
-            if username and password is None:
-                password = self._io.ask_hidden("Password:")
+        certificates = self._authenticator.get_certs_for_repository(repository_name)
+        resolved_cert = cert or certificates.cert or certificates.verify
+        resolved_client_cert = client_cert or certificates.client_cert
 
         self._uploader.auth(username, password)
 
@@ -96,7 +86,7 @@ class Publisher:
 
         self._uploader.upload(
             url,
-            cert=cert or get_cert(self._poetry.config, repository_name),
+            cert=resolved_cert,
             client_cert=resolved_client_cert,
             dry_run=dry_run,
             skip_existing=skip_existing,

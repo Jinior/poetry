@@ -10,6 +10,7 @@ from poetry.core.packages.file_dependency import FileDependency
 from poetry.core.packages.vcs_dependency import VCSDependency
 
 from poetry.console.commands.group_command import GroupCommand
+from poetry.utils.helpers import canonicalize_name
 
 
 if TYPE_CHECKING:
@@ -71,7 +72,7 @@ lists all packages available."""
 
     colors = ["cyan", "yellow", "green", "magenta", "blue"]
 
-    def handle(self) -> int | None:
+    def handle(self) -> int:
         from cleo.io.null_io import NullIO
         from cleo.terminal import Terminal
 
@@ -104,7 +105,7 @@ lists all packages available."""
                 return 1
 
         if self.option("outdated"):
-            self._io.input.set_option("latest", True)
+            self.io.input.set_option("latest", True)
 
         if not self.poetry.locker.is_locked():
             self.line_error(
@@ -123,7 +124,7 @@ lists all packages available."""
             for p in packages:
                 for require in requires:
                     if p.name == require.name:
-                        self.display_package_tree(self._io, p, locked_repo)
+                        self.display_package_tree(self.io, p, locked_repo)
                         break
 
             return 0
@@ -148,7 +149,7 @@ lists all packages available."""
         if package:
             pkg = None
             for locked in locked_packages:
-                if package.lower() == locked.name:
+                if canonicalize_name(package) == locked.name:
                     pkg = locked
                     break
 
@@ -174,17 +175,15 @@ lists all packages available."""
                         # if no rev-deps exist we'll make this clear as it can otherwise
                         # look very odd for packages that also have no or few direct
                         # dependencies
-                        self._io.write_line(
-                            f"Package {package} is a direct dependency."
-                        )
+                        self.io.write_line(f"Package {package} is a direct dependency.")
 
                     for p in packages:
                         self.display_package_tree(
-                            self._io, p, locked_repo, why_package=pkg
+                            self.io, p, locked_repo, why_package=pkg
                         )
 
                 else:
-                    self.display_package_tree(self._io, pkg, locked_repo)
+                    self.display_package_tree(self.io, pkg, locked_repo)
 
                 return 0
 
@@ -229,7 +228,7 @@ lists all packages available."""
                 continue
 
             current_length = len(locked.pretty_name)
-            if not self._io.output.is_decorated():
+            if not self.io.output.is_decorated():
                 installed_status = self.get_installed_status(locked, installed_repo)
 
                 if installed_status == "not-installed":
@@ -310,7 +309,7 @@ lists all packages available."""
                 if installed_status == "not-installed":
                     color = "red"
 
-                    if not self._io.output.is_decorated():
+                    if not self.io.output.is_decorated():
                         # Non installed in non decorated mode
                         install_marker = " (!)"
 
@@ -371,7 +370,7 @@ lists all packages available."""
 
             self.line(line)
 
-        return None
+        return 0
 
     def display_package_tree(
         self,

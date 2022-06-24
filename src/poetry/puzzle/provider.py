@@ -12,7 +12,6 @@ from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
-from typing import Any
 from typing import cast
 
 from cleo.ui.progress_indicator import ProgressIndicator
@@ -35,7 +34,9 @@ from poetry.mixology.term import Term
 from poetry.packages import DependencyPackage
 from poetry.packages.package_collection import PackageCollection
 from poetry.puzzle.exceptions import OverrideNeeded
+from poetry.repositories.exceptions import PackageNotFound
 from poetry.utils.helpers import download_file
+from poetry.utils.helpers import safe_extra
 from poetry.vcs.git import Git
 
 
@@ -44,12 +45,15 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from collections.abc import Iterator
 
+    from cleo.io.io import IO
     from poetry.core.packages.dependency import Dependency
     from poetry.core.packages.package import Package
+    from poetry.core.packages.specification import PackageSpecification
     from poetry.core.semver.version_constraint import VersionConstraint
     from poetry.core.version.markers import BaseMarker
 
     from poetry.repositories import Pool
+    from poetry.repositories import Repository
     from poetry.utils.env import Env
 
 
@@ -122,8 +126,9 @@ class Provider:
         self,
         package: Package,
         pool: Pool,
-        io: Any,
+        io: IO,
         env: Env | None = None,
+        installed: Repository | None = None,
     ) -> None:
         self._package = package
         self._pool = pool
@@ -136,6 +141,7 @@ class Provider:
         self._deferred_cache: dict[Dependency, Package] = {}
         self._load_deferred = True
         self._source_root: Path | None = None
+        self._installed = installed
 
     @property
     def pool(self) -> Pool:
@@ -185,16 +191,37 @@ class Provider:
                 f" package's name: {package.name}"
             )
 
-    def search_for(
+    def search_for_installed_packages(
         self,
-        dependency: (
-            Dependency
-            | VCSDependency
-            | FileDependency
-            | DirectoryDependency
-            | URLDependency
-        ),
-    ) -> list[DependencyPackage]:
+        specification: PackageSpecification,
+    ) -> list[Package]:
+        """
+        Search for installed packages, when available, that provides the given
+        specification.
+
+        This is useful when dealing with packages that are under development, not
+        published on package sources and/or only available via system installations.
+        """
+        if not self._installed:
+            return []
+
+        logger.debug(
+            "Falling back to installed packages to discover metadata for <c2>%s</>",
+            specification.complete_name,
+        )
+        packages = [
+            package
+            for package in self._installed.packages
+            if package.provides(specification)
+        ]
+        logger.debug(
+            "Found <c2>%d</> compatible packages for <c2>%s</>",
+            len(packages),
+            specification.complete_name,
+        )
+        return packages
+
+    def search_for(self, dependency: Dependency) -> list[DependencyPackage]:
         """
         Search for the specifications that match the given dependency.
 
@@ -226,6 +253,9 @@ class Provider:
                 ),
                 reverse=True,
             )
+
+        if not packages:
+            packages = self.search_for_installed_packages(dependency)
 
         return PackageCollection(dependency, packages)
 
@@ -478,15 +508,29 @@ class Provider:
             "url",
             "git",
         }:
-            package = DependencyPackage(
-                package.dependency,
-                self._pool.package(
-                    package.name,
-                    package.version.text,
-                    extras=list(package.dependency.extras),
-                    repository=package.dependency.source_name,
-                ),
-            )
+            try:
+                package = DependencyPackage(
+                    package.dependency,
+                    self._pool.package(
+                        package.name,
+                        package.version.text,
+                        extras=list(package.dependency.extras),
+                        repository=package.dependency.source_name,
+                    ),
+                )
+            except PackageNotFound as e:
+                try:
+                    package = next(
+                        DependencyPackage(
+                            package.dependency,
+                            pkg,
+                        )
+                        for pkg in self.search_for_installed_packages(
+                            package.dependency
+                        )
+                    )
+                except StopIteration:
+                    raise e from e
             requires = package.requires
         else:
             requires = package.requires
@@ -511,6 +555,7 @@ class Provider:
         # to the current package
         if package.dependency.extras:
             for extra in package.dependency.extras:
+                extra = safe_extra(extra)
                 if extra not in package.extras:
                     continue
 
@@ -533,7 +578,9 @@ class Provider:
                 (dep.is_optional() and dep.name not in optional_dependencies)
                 or (
                     dep.in_extras
-                    and not set(dep.in_extras).intersection(package.dependency.extras)
+                    and not set(dep.in_extras).intersection(
+                        {safe_extra(extra) for extra in package.dependency.extras}
+                    )
                 )
             ):
                 continue
@@ -560,39 +607,31 @@ class Provider:
         # An example of this is:
         #   - pypiwin32 (220); sys_platform == "win32" and python_version >= "3.6"
         #   - pypiwin32 (219); sys_platform == "win32" and python_version < "3.6"
-        #
-        # Additional care has to be taken to ensure that hidden constraints like that
-        # of source type, reference etc. are taking into consideration when duplicates
-        # are identified.
-        duplicates: dict[
-            tuple[str, str | None, str | None, str | None, str | None], list[Dependency]
-        ] = {}
+        duplicates: dict[str, list[Dependency]] = defaultdict(list)
         for dep in dependencies:
-            key = (
-                dep.complete_name,
-                dep.source_type,
-                dep.source_url,
-                dep.source_reference,
-                dep.source_subdirectory,
-            )
-            if key not in duplicates:
-                duplicates[key] = []
-            duplicates[key].append(dep)
+            duplicates[dep.complete_name].append(dep)
 
         dependencies = []
-        for key, deps in duplicates.items():
+        for dep_name, deps in duplicates.items():
             if len(deps) == 1:
                 dependencies.append(deps[0])
                 continue
 
-            extra_keys = ", ".join(k for k in key[1:] if k is not None)
-            dep_name = f"{key[0]} ({extra_keys})" if extra_keys else key[0]
-
             self.debug(f"<debug>Duplicate dependencies for {dep_name}</debug>")
 
-            deps = self._merge_dependencies_by_marker(deps)
-            deps = self._merge_dependencies_by_constraint(deps)
-
+            non_direct_origin_deps: list[Dependency] = []
+            direct_origin_deps: list[Dependency] = []
+            for dep in deps:
+                if dep.is_direct_origin():
+                    direct_origin_deps.append(dep)
+                else:
+                    non_direct_origin_deps.append(dep)
+            deps = (
+                self._merge_dependencies_by_constraint(
+                    self._merge_dependencies_by_marker(non_direct_origin_deps)
+                )
+                + direct_origin_deps
+            )
             if len(deps) == 1:
                 self.debug(f"<debug>Merging requirements for {deps[0]!s}</debug>")
                 dependencies.append(deps[0])

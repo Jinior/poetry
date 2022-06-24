@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import json
 import os
 import shutil
 
@@ -9,6 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from cleo.io.null_io import NullIO
+from deepdiff import DeepDiff
 
 from poetry.factory import Factory
 from poetry.masonry.builders.editable import EditableBuilder
@@ -105,6 +108,15 @@ def test_builder_installs_proper_files_for_standard_packages(
     assert dist_info.joinpath("METADATA").exists()
     assert dist_info.joinpath("RECORD").exists()
     assert dist_info.joinpath("entry_points.txt").exists()
+    assert dist_info.joinpath("direct_url.json").exists()
+
+    assert not DeepDiff(
+        {
+            "dir_info": {"editable": True},
+            "url": simple_poetry.file.path.parent.as_uri(),
+        },
+        json.loads(dist_info.joinpath("direct_url.json").read_text()),
+    )
 
     assert dist_info.joinpath("INSTALLER").read_text() == "poetry"
     assert (
@@ -147,16 +159,22 @@ My Package
 """
     assert metadata == dist_info.joinpath("METADATA").read_text(encoding="utf-8")
 
-    records = dist_info.joinpath("RECORD").read_text()
+    with open(dist_info.joinpath("RECORD"), encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        records = list(reader)
+
+    assert all(len(row) == 3 for row in records)
+    record_entries = {row[0] for row in records}
     pth_file = "simple_project.pth"
     assert tmp_venv.site_packages.exists(pth_file)
-    assert str(tmp_venv.site_packages.find(pth_file)[0]) in records
-    assert str(tmp_venv._bin_dir.joinpath("foo")) in records
-    assert str(tmp_venv._bin_dir.joinpath("baz")) in records
-    assert str(dist_info.joinpath("METADATA")) in records
-    assert str(dist_info.joinpath("INSTALLER")) in records
-    assert str(dist_info.joinpath("entry_points.txt")) in records
-    assert str(dist_info.joinpath("RECORD")) in records
+    assert str(tmp_venv.site_packages.find(pth_file)[0]) in record_entries
+    assert str(tmp_venv._bin_dir.joinpath("foo")) in record_entries
+    assert str(tmp_venv._bin_dir.joinpath("baz")) in record_entries
+    assert str(dist_info.joinpath("METADATA")) in record_entries
+    assert str(dist_info.joinpath("INSTALLER")) in record_entries
+    assert str(dist_info.joinpath("entry_points.txt")) in record_entries
+    assert str(dist_info.joinpath("RECORD")) in record_entries
+    assert str(dist_info.joinpath("direct_url.json")) in record_entries
 
     baz_script = f"""\
 #!{tmp_venv.python}

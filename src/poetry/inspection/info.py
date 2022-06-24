@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import functools
 import glob
 import logging
@@ -131,11 +132,6 @@ class PackageInfo:
         cache_version = data.pop("_cache_version", None)
         return cls(cache_version=cache_version, **data)
 
-    @classmethod
-    def _log(cls, msg: str, level: str = "info") -> None:
-        """Internal helper method to log information."""
-        getattr(logger, level)(f"<debug>{cls.__name__}:</debug> {msg}")
-
     def to_package(
         self,
         name: str | None = None,
@@ -200,10 +196,9 @@ class PackageInfo:
                 dependency = Dependency.create_from_pep_508(req, relative_to=root_dir)
             except ValueError:
                 # Likely unable to parse constraint so we skip it
-                self._log(
+                logger.debug(
                     f"Invalid constraint ({req}) found in"
                     f" {package.name}-{package.version} dependencies, skipping",
-                    level="warning",
                 )
                 continue
 
@@ -562,12 +557,11 @@ def get_pep517_metadata(path: Path) -> PackageInfo:
     :param path: Path to package source to build and read metadata for.
     """
     info = None
-    try:
+
+    with contextlib.suppress(PackageInfoError):
         info = PackageInfo.from_setup_files(path)
         if all([info.version, info.name, info.requires_dist]):
             return info
-    except PackageInfoError:
-        pass
 
     with ephemeral_environment(
         flags={"no-pip": False, "no-setuptools": False, "no-wheel": False}
