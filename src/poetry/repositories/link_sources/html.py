@@ -6,10 +6,10 @@ import warnings
 from html import unescape
 from typing import TYPE_CHECKING
 
+from packaging.utils import canonicalize_name
 from poetry.core.packages.utils.link import Link
 
 from poetry.repositories.link_sources.base import LinkSource
-from poetry.utils.helpers import canonicalize_name
 
 
 if TYPE_CHECKING:
