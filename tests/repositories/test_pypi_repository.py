@@ -6,6 +6,7 @@ import shutil
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING
+from typing import Any
 
 import pytest
 
@@ -35,7 +36,9 @@ class MockRepository(PyPiRepository):
     def __init__(self, fallback: bool = False) -> None:
         super().__init__(url="http://foo.bar", disable_cache=True, fallback=fallback)
 
-    def _get(self, url: str) -> dict | None:
+    def _get(
+        self, url: str, headers: dict[str, str] | None = None
+    ) -> dict[str, Any] | None:
         parts = url.split("/")[1:]
         name = parts[0]
         if len(parts) == 3:
@@ -47,8 +50,6 @@ class MockRepository(PyPiRepository):
             fixture = self.JSON_FIXTURES / (name + ".json")
         else:
             fixture = self.JSON_FIXTURES / name / (version + ".json")
-            if not fixture.exists():
-                fixture = self.JSON_FIXTURES / (name + ".json")
 
         if not fixture.exists():
             return None
@@ -330,3 +331,25 @@ def test_use_pypi_pretty_name() -> None:
     package = repo.find_packages(Factory.create_dependency("twisted", "*"))
     assert len(package) == 1
     assert package[0].pretty_name == "Twisted"
+
+
+def test_find_links_for_package_of_supported_types():
+    repo = MockRepository()
+    package = repo.find_packages(Factory.create_dependency("hbmqtt", "0.9.6"))
+
+    assert len(package) == 1
+
+    links = repo.find_links_for_package(package[0])
+
+    assert len(links) == 1
+    assert links[0].is_sdist
+    assert links[0].show_url == "hbmqtt-0.9.6.tar.gz"
+
+
+def test_get_release_info_includes_only_supported_types():
+    repo = MockRepository()
+
+    release_info = repo._get_release_info(name="hbmqtt", version="0.9.6")
+
+    assert len(release_info["files"]) == 1
+    assert release_info["files"][0]["file"] == "hbmqtt-0.9.6.tar.gz"
