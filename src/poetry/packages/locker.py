@@ -11,10 +11,11 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import cast
 
+from packaging.utils import canonicalize_name
+from poetry.core.constraints.version import Version
+from poetry.core.constraints.version import parse_constraint
 from poetry.core.packages.dependency import Dependency
 from poetry.core.packages.package import Package
-from poetry.core.semver.helpers import parse_constraint
-from poetry.core.semver.version import Version
 from poetry.core.toml.file import TOMLFile
 from poetry.core.version.markers import parse_marker
 from poetry.core.version.requirements import InvalidRequirement
@@ -67,10 +68,7 @@ class Locker:
         """
         Checks whether the locker has been locked (lockfile found).
         """
-        if not self._lock.exists():
-            return False
-
-        return "package" in self.lock_data
+        return self._lock.exists()
 
     def is_fresh(self) -> bool:
         """
@@ -157,6 +155,7 @@ class Locker:
             extras = info.get("extras", {})
             if extras:
                 for name, deps in extras.items():
+                    name = canonicalize_name(name)
                     package.extras[name] = []
 
                     for dep in deps:
@@ -256,12 +255,18 @@ class Locker:
             "files": files,
         }
 
-        if not self.is_locked() or lock != self.lock_data:
+        do_write = True
+        if self.is_locked():
+            try:
+                lock_data = self.lock_data
+            except RuntimeError:
+                # incompatible, invalid or no lock file
+                pass
+            else:
+                do_write = lock != lock_data
+        if do_write:
             self._write_lock_data(lock)
-
-            return True
-
-        return False
+        return do_write
 
     def _write_lock_data(self, data: TOMLDocument) -> None:
         self.lock.write(data)
